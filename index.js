@@ -3,6 +3,58 @@ require('dotenv').config();
 const express = require('express');
 const app = express();
 
+async function checkReminders() {
+
+    const guild = client.guilds.cache.first();
+
+    if (!guild) return;
+
+    const channel = guild.channels.cache.find(
+        channel => channel.name === 'events'
+    );
+
+    if (!channel) return;
+
+    const { data: events, error } = await supabase
+        .from('events')
+        .select('*')
+        .order('date', { ascending: true });
+
+    if (error) {
+        console.error('Error checking reminders:', error);
+        return;
+    }
+
+    const now = new Date();
+
+    for (const event of events) {
+
+        const eventDate = new Date(event.date);
+
+        const hoursUntilEvent =
+            (eventDate - now) / (1000 * 60 * 60);
+
+        if (hoursUntilEvent > 0 && hoursUntilEvent <= 24) {
+
+            const reminderKey = `reminded_${event.id}`;
+
+            if (global[reminderKey]) continue;
+
+            await channel.send(
+ 		   `@everyone\n\n` +
+ 		   `🔔 **EVENT REMINDER**\n\n` +
+  		  `**${event.name}** is happening tomorrow!` +
+  		 (event.description
+     			   ? `\n📝 ${event.description}`
+       			 : '')
+);
+            );
+
+            global[reminderKey] = true;
+        }
+    }
+}
+
 const {
     Client,
     GatewayIntentBits,
@@ -319,6 +371,8 @@ client.once('ready', async () => {
     }, 3000);
 
 });
+
+setInterval(checkReminders, 60 * 60 * 1000);
 
 
 // ============================
