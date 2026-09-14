@@ -363,6 +363,10 @@ client.once('ready', async () => {
 
     console.log('Server Calendar is online!');
 
+    client.user.setActivity('Developed by OogaBoogaBob', {
+        type: 0
+    });
+
     setTimeout(async () => {
         await updateCalendar(
             client.guilds.cache.first()
