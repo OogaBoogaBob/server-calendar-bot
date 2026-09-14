@@ -8,7 +8,18 @@ const {
     SlashCommandBuilder
 } = require('discord.js');
 
-const db = require('./database');
+const { createClient } = require('@supabase/supabase-js');
+
+
+// ============================
+// Connect to Supabase
+// ============================
+
+const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_KEY
+);
+
 
 const client = new Client({
     intents: [GatewayIntentBits.Guilds]
@@ -16,7 +27,7 @@ const client = new Client({
 
 
 // ============================
-// Create the calendar message
+// Create/update the calendar message
 // ============================
 
 async function updateCalendar(guild) {
@@ -31,20 +42,25 @@ async function updateCalendar(guild) {
     }
 
 
-    const events = db.prepare(`
-        SELECT *
-        FROM events
-        WHERE guild_id = ?
-        ORDER BY date ASC
-    `).all(guild.id);
+    const { data: events, error: eventsError } = await supabase
+        .from('events')
+        .select('*')
+        .eq('guild_id', guild.id)
+        .order('date', { ascending: true });
+
+
+    if (eventsError) {
+        console.error('Could not load events:', eventsError);
+        return;
+    }
 
 
     let message =
-        '📅 **SERVER CALENDAR**\n' +
+        '📅 **SERVER EVENTS CALENDAR**\n' +
         '━━━━━━━━━━━━━━━━━━━━\n\n';
 
 
-    if (events.length === 0) {
+    if (!events || events.length === 0) {
 
         message += '📭 No events scheduled yet.';
 
@@ -91,13 +107,22 @@ async function updateCalendar(guild) {
     }
 
 
-    // See if we already have a calendar message
-    const savedMessage = db.prepare(`
-        SELECT *
-        FROM calendar_messages
-        WHERE guild_id = ?
-    `).get(guild.id);
+    // Look for the saved calendar message
 
+    const { data: savedMessage, error: messageError } = await supabase
+        .from('calendar_messages')
+        .select('*')
+        .eq('guild_id', guild.id)
+        .maybeSingle();
+
+
+    if (messageError) {
+        console.error('Could not find saved calendar message:', messageError);
+        return;
+    }
+
+
+    // Edit the existing calendar message
 
     if (savedMessage) {
 
@@ -122,28 +147,31 @@ async function updateCalendar(guild) {
 
 
     // Create a new calendar message
+
     const newMessage =
         await calendarChannel.send(message);
 
 
-    db.prepare(`
-        INSERT OR REPLACE INTO calendar_messages
-        (
-            guild_id,
-            channel_id,
-            message_id
-        )
-        VALUES (?, ?, ?)
-    `).run(
-        guild.id,
-        calendarChannel.id,
-        newMessage.id
-    );
+    const { error: saveMessageError } = await supabase
+        .from('calendar_messages')
+        .upsert({
+            guild_id: guild.id,
+            channel_id: calendarChannel.id,
+            message_id: newMessage.id
+        });
+
+
+    if (saveMessageError) {
+        console.error(
+            'Could not save calendar message:',
+            saveMessageError
+        );
+    }
 }
 
 
 // ============================
-// Our /event command
+// /event command
 // ============================
 
 const commands = [
@@ -240,7 +268,7 @@ const commands = [
 
 
 // ============================
-// Register commands
+// Register Discord commands
 // ============================
 
 const rest = new REST({ version: '10' })
@@ -281,7 +309,11 @@ client.once('ready', async () => {
 
     console.log('Server Calendar is online!');
 
-    await updateCalendar(client.guilds.cache.first());
+    setTimeout(async () => {
+        await updateCalendar(
+            client.guilds.cache.first()
+        );
+    }, 3000);
 
 });
 
@@ -327,32 +359,37 @@ client.on('interactionCreate', async interaction => {
         }
 
 
-        const result = db.prepare(`
-            INSERT INTO events
-            (
-                guild_id,
-                name,
-                date,
-                description,
-                created_by,
-                created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-        `).run(
-            interaction.guildId,
-            name,
-            date,
-            description,
-            interaction.user.id,
-            new Date().toISOString()
-        );
+        const { data: event, error } = await supabase
+            .from('events')
+            .insert({
+                guild_id: interaction.guildId,
+                name: name,
+                date: date,
+                description: description,
+                created_by: interaction.user.id,
+                created_at: new Date().toISOString()
+            })
+            .select()
+            .single();
+
+
+        if (error) {
+
+            console.error('Could not add event:', error);
+
+            await interaction.reply(
+                '❌ Something went wrong while adding the event.'
+            );
+
+            return;
+        }
 
 
         await updateCalendar(interaction.guild);
 
 
         await interaction.reply(
-            `✅ Added **${name}** for **${date}**!\nEvent ID: \`${result.lastInsertRowid}\``
+            `✅ Added **${name}** for **${date}**!\nEvent ID: \`${event.id}\``
         );
 
         return;
@@ -365,15 +402,26 @@ client.on('interactionCreate', async interaction => {
 
     if (interaction.options.getSubcommand() === 'list') {
 
-        const events = db.prepare(`
-            SELECT *
-            FROM events
-            WHERE guild_id = ?
-            ORDER BY date ASC
-        `).all(interaction.guildId);
+        const { data: events, error } = await supabase
+            .from('events')
+            .select('*')
+            .eq('guild_id', interaction.guildId)
+            .order('date', { ascending: true });
 
 
-        if (events.length === 0) {
+        if (error) {
+
+            console.error('Could not load events:', error);
+
+            await interaction.reply(
+                '❌ Something went wrong while loading the events.'
+            );
+
+            return;
+        }
+
+
+        if (!events || events.length === 0) {
 
             await interaction.reply(
                 '📅 There are no events yet!'
@@ -383,7 +431,8 @@ client.on('interactionCreate', async interaction => {
         }
 
 
-        let message = '📅 **UPCOMING EVENTS**\n\n';
+        let message =
+            '📅 **UPCOMING EVENTS**\n\n';
 
 
         for (const event of events) {
@@ -418,15 +467,24 @@ client.on('interactionCreate', async interaction => {
             interaction.options.getInteger('id');
 
 
-        const event = db.prepare(`
-            SELECT *
-            FROM events
-            WHERE id = ?
-            AND guild_id = ?
-        `).get(
-            id,
-            interaction.guildId
-        );
+        const { data: event, error: findError } = await supabase
+            .from('events')
+            .select('*')
+            .eq('id', id)
+            .eq('guild_id', interaction.guildId)
+            .maybeSingle();
+
+
+        if (findError) {
+
+            console.error('Could not find event:', findError);
+
+            await interaction.reply(
+                '❌ Something went wrong while finding the event.'
+            );
+
+            return;
+        }
 
 
         if (!event) {
@@ -439,14 +497,23 @@ client.on('interactionCreate', async interaction => {
         }
 
 
-        db.prepare(`
-            DELETE FROM events
-            WHERE id = ?
-            AND guild_id = ?
-        `).run(
-            id,
-            interaction.guildId
-        );
+        const { error: deleteError } = await supabase
+            .from('events')
+            .delete()
+            .eq('id', id)
+            .eq('guild_id', interaction.guildId);
+
+
+        if (deleteError) {
+
+            console.error('Could not delete event:', deleteError);
+
+            await interaction.reply(
+                '❌ Something went wrong while deleting the event.'
+            );
+
+            return;
+        }
 
 
         await updateCalendar(interaction.guild);
@@ -489,15 +556,24 @@ client.on('interactionCreate', async interaction => {
         }
 
 
-        const event = db.prepare(`
-            SELECT *
-            FROM events
-            WHERE id = ?
-            AND guild_id = ?
-        `).get(
-            id,
-            interaction.guildId
-        );
+        const { data: event, error: findError } = await supabase
+            .from('events')
+            .select('*')
+            .eq('id', id)
+            .eq('guild_id', interaction.guildId)
+            .maybeSingle();
+
+
+        if (findError) {
+
+            console.error('Could not find event:', findError);
+
+            await interaction.reply(
+                '❌ Something went wrong while finding the event.'
+            );
+
+            return;
+        }
 
 
         if (!event) {
@@ -510,21 +586,27 @@ client.on('interactionCreate', async interaction => {
         }
 
 
-        db.prepare(`
-            UPDATE events
-            SET
-                date = ?,
-                name = ?,
-                description = ?
-            WHERE id = ?
-            AND guild_id = ?
-        `).run(
-            date,
-            name,
-            description,
-            id,
-            interaction.guildId
-        );
+        const { error: updateError } = await supabase
+            .from('events')
+            .update({
+                date: date,
+                name: name,
+                description: description
+            })
+            .eq('id', id)
+            .eq('guild_id', interaction.guildId);
+
+
+        if (updateError) {
+
+            console.error('Could not update event:', updateError);
+
+            await interaction.reply(
+                '❌ Something went wrong while editing the event.'
+            );
+
+            return;
+        }
 
 
         await updateCalendar(interaction.guild);
@@ -539,6 +621,10 @@ client.on('interactionCreate', async interaction => {
 
 });
 
+
+// ============================
+// Start the bot
+// ============================
 
 registerCommands();
 
