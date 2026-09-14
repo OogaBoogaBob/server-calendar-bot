@@ -48,7 +48,6 @@ async function checkReminders() {
      			   ? `\n📝 ${event.description}`
        			 : '')
 );
-            );
 
             global[reminderKey] = true;
         }
