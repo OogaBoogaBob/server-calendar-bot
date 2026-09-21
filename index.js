@@ -610,6 +610,12 @@ client.on(
     'interactionCreate',
     async interaction => {
 
+console.log(
+    'INTERACTION RECEIVED:',
+    interaction.type,
+    interaction.isButton() ? interaction.customId : interaction.commandName
+);
+
 
         // ============================
         // View Full Event List button
