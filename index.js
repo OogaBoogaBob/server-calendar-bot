@@ -11,6 +11,7 @@ const {
     Routes,
     SlashCommandBuilder,
     ActionRowBuilder,
+    MessageFlags,
     ButtonBuilder,
     ButtonStyle
 } = require('discord.js');
@@ -621,7 +622,7 @@ client.on(
         ) {
 
             await interaction.deferReply({
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
 
 
