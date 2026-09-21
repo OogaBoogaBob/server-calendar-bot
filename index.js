@@ -652,9 +652,9 @@ client.on(
                 );
 
 
-                await interaction.editReply(
-                    '❌ Something went wrong while loading the events.'
-                );
+                await interaction.editReply({
+    content: '❌ Something went wrong while loading the events.'
+});
 
                 return;
             }
@@ -662,9 +662,9 @@ client.on(
 
             if (!events || events.length === 0) {
 
-                await interaction.editReply(
-                    '📅 There are no upcoming events!'
-                );
+                await interaction.editReply({
+    content: '📅 There are no upcoming events!'
+});
 
                 return;
             }
