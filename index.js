@@ -1,8 +1,6 @@
-
 require('dotenv').config();
 
 const express = require('express');
-const app = express();
 
 const {
     Client,
@@ -11,242 +9,101 @@ const {
     Routes,
     SlashCommandBuilder,
     ActionRowBuilder,
-    MessageFlags,
     ButtonBuilder,
-    ButtonStyle
+    ButtonStyle,
+    MessageFlags
 } = require('discord.js');
 
-const { createClient } = require('@supabase/supabase-js');
+const {
+    createClient
+} = require('@supabase/supabase-js');
 
 
-// ============================
-// Connect to Supabase
-// ============================
+// ============================================================
+// ENVIRONMENT
+// ============================================================
 
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_KEY
-);
+const requiredEnv = [
+    'DISCORD_TOKEN',
+    'DISCORD_CLIENT_ID',
+    'SUPABASE_URL',
+    'SUPABASE_KEY'
+];
 
+for (const name of requiredEnv) {
 
-const client = new Client({
-    intents: [GatewayIntentBits.Guilds]
-});
-
-
-// ============================
-// Create/update the calendar message
-// ============================
-
-async function updateCalendar(guild) {
-
-    if (!guild) return;
-
-    const calendarChannel = guild.channels.cache.find(
-        channel => channel.name === 'events'
-    );
-
-    if (!calendarChannel) {
-        console.log('Could not find the #events channel.');
-        return;
-    }
-
-    const { data: events, error: eventsError } = await supabase
-        .from('events')
-        .select('*')
-        .eq('guild_id', guild.id)
-        .order('date', { ascending: true });
-
-    if (eventsError) {
-        console.error('Could not load events:', eventsError);
-        return;
-    }
-
-    let message =
-        '📅 **SERVER EVENTS CALENDAR**\n' +
-        '━━━━━━━━━━━━━━━━━━━━\n\n';
-
-    // Only show the next 4 events
-    const visibleEvents = (events || []).slice(0, 4);
-
-    // Count events that are not being displayed
-    const extraEvents = Math.max(
-        (events || []).length - 4,
-        0
-    );
-
-    if (visibleEvents.length === 0) {
-
-        message += '📭 No events scheduled yet.';
-
-    } else {
-
-        let currentMonth = '';
-
-        for (const event of visibleEvents) {
-
-            const date = new Date(
-                event.date + 'T00:00:00'
-            );
-
-            const month = date.toLocaleDateString(
-                'en-US',
-                {
-                    month: 'long',
-                    year: 'numeric'
-                }
-            );
-
-            if (month !== currentMonth) {
-
-                currentMonth = month;
-
-                message +=
-                    `🗓️ **${month.toUpperCase()}**\n\n`;
-            }
-
-            const day = date.getDate();
-
-            message +=
-                `**${day}** • ${event.name}\n`;
-
-            if (event.description) {
-
-                message +=
-                    `   └─ ${event.description}\n`;
-            }
-
-            message += '\n';
-        }
-
-        if (extraEvents > 0) {
-
-            message +=
-                `📋 **+ ${extraEvents} more upcoming events**\n`;
-        }
-    }
-
-
-    // ============================
-    // View Full Event List button
-    // ============================
-
-    const button = new ButtonBuilder()
-        .setCustomId('view_full_event_list')
-        .setLabel('View Full Event List')
-        .setEmoji('📋')
-        .setStyle(ButtonStyle.Primary);
-
-    const row = new ActionRowBuilder()
-        .addComponents(button);
-
-
-    // ============================
-    // Look for saved calendar message
-    // ============================
-
-    const {
-        data: savedMessage,
-        error: messageError
-    } = await supabase
-        .from('calendar_messages')
-        .select('*')
-        .eq('guild_id', guild.id)
-        .maybeSingle();
-
-    if (messageError) {
+    if (!process.env[name]) {
 
         console.error(
-            'Could not find saved calendar message:',
-            messageError
+            `Missing required environment variable: ${name}`
         );
 
-        return;
-    }
-
-
-    // ============================
-    // Edit existing calendar message
-    // ============================
-
-    if (savedMessage) {
-
-        try {
-
-            const calendarMessage =
-                await calendarChannel.messages.fetch(
-                    savedMessage.message_id
-                );
-
-            await calendarMessage.edit({
-                content: message,
-                components: [row]
-            });
-
-            return;
-
-        } catch (error) {
-
-            console.log(
-                'Old calendar message could not be found. Creating a new one.'
-            );
-        }
-    }
-
-
-    // ============================
-    // Create new calendar message
-    // ============================
-
-    const newMessage =
-        await calendarChannel.send({
-            content: message,
-            components: [row]
-        });
-
-
-    const {
-        error: saveMessageError
-    } = await supabase
-        .from('calendar_messages')
-        .upsert({
-            guild_id: guild.id,
-            channel_id: calendarChannel.id,
-            message_id: newMessage.id
-        });
-
-    if (saveMessageError) {
-
-        console.error(
-            'Could not save calendar message:',
-            saveMessageError
-        );
+        process.exit(1);
     }
 }
 
+const TOKEN =
+    process.env.DISCORD_TOKEN;
 
-// ============================
-// Check reminders
-// ============================
+const CLIENT_ID =
+    process.env.DISCORD_CLIENT_ID;
 
-async function checkReminders() {
+const SUPABASE_URL =
+    process.env.SUPABASE_URL;
 
-    const guild = client.guilds.cache.first();
+const SUPABASE_KEY =
+    process.env.SUPABASE_KEY;
 
-    if (!guild) return;
 
-    const channel = guild.channels.cache.find(
-        channel => channel.name === 'events'
+// ============================================================
+// SETTINGS
+// ============================================================
+
+const EVENTS_CHANNEL_NAME = 'events';
+
+const EVENTS_ROLE_ID =
+    '1551044124550107157';
+
+const PORT =
+    process.env.PORT || 10000;
+
+
+// ============================================================
+// SUPABASE
+// ============================================================
+
+const supabase =
+    createClient(
+        SUPABASE_URL,
+        SUPABASE_KEY
     );
 
-    if (!channel) return;
+
+// ============================================================
+// DISCORD CLIENT
+// ============================================================
+
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds
+    ]
+});
 
 
-    // ============================
-    // Get today's date in Eastern Time
-    // ============================
+// ============================================================
+// EXPRESS
+// ============================================================
 
-    const today = new Intl.DateTimeFormat(
+const app = express();
+
+
+// ============================================================
+// DATE HELPERS
+// ============================================================
+
+function getEasternToday() {
+
+    return new Intl.DateTimeFormat(
         'en-CA',
         {
             timeZone: 'America/New_York',
@@ -255,371 +112,740 @@ async function checkReminders() {
             day: '2-digit'
         }
     ).format(new Date());
-
-
-    // ============================
-    // Remove events whose date has passed
-    // ============================
-
-    const {
-        error: deleteError
-    } = await supabase
-        .from('events')
-        .delete()
-        .eq('guild_id', guild.id)
-        .lt('date', today);
-
-    if (deleteError) {
-
-        console.error(
-            'Error removing old events:',
-            deleteError
-        );
-    }
-
-
-    // ============================
-    // Find events happening today
-    // ============================
-
-    const {
-        data: events,
-        error
-    } = await supabase
-        .from('events')
-        .select('*')
-        .eq('guild_id', guild.id)
-        .eq('date', today);
-
-    if (error) {
-
-        console.error(
-            'Error checking reminders:',
-            error
-        );
-
-        return;
-    }
-
-
-    // ============================
-    // Send reminders
-    // ============================
-
-    for (const event of events || []) {
-
-        const {
-            data: existingReminder,
-            error: reminderCheckError
-        } = await supabase
-            .from('event_reminders')
-            .select('event_id')
-            .eq('event_id', event.id)
-            .maybeSingle();
-
-
-        if (reminderCheckError) {
-
-            console.error(
-                'Error checking reminder status:',
-                reminderCheckError
-            );
-
-            continue;
-        }
-
-
-        if (existingReminder) continue;
-
-
-        // Send reminder to Events Tags role
-        await channel.send(
-            `<@&1551044124550107157>\n\n` +
-            `🔔 **EVENT REMINDER**\n\n` +
-            `**${event.name}** is happening today!` +
-            (
-                event.description
-                    ? `\n📝 ${event.description}`
-                    : ''
-            )
-        );
-
-
-        // Remember that reminder was sent
-        const {
-            error: reminderSaveError
-        } = await supabase
-            .from('event_reminders')
-            .insert({
-                event_id: event.id,
-                sent_at: new Date().toISOString()
-            });
-
-
-        if (reminderSaveError) {
-
-            console.error(
-                'Could not save reminder status:',
-                reminderSaveError
-            );
-        }
-    }
-
-
-    // Refresh calendar after cleanup
-    await updateCalendar(guild);
 }
 
 
-// ============================
-// /event command
-// ============================
+function isValidDate(dateString) {
+
+    if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(
+            dateString
+        )
+    ) {
+        return false;
+    }
+
+    const [
+        year,
+        month,
+        day
+    ] = dateString
+        .split('-')
+        .map(Number);
+
+    const date =
+        new Date(
+            Date.UTC(
+                year,
+                month - 1,
+                day
+            )
+        );
+
+    return (
+        date.getUTCFullYear() === year &&
+        date.getUTCMonth() === month - 1 &&
+        date.getUTCDate() === day
+    );
+}
+
+
+function formatMonth(dateString) {
+
+    const [
+        year,
+        month,
+        day
+    ] = dateString
+        .split('-')
+        .map(Number);
+
+    const date =
+        new Date(
+            Date.UTC(
+                year,
+                month - 1,
+                day
+            )
+        );
+
+    return date.toLocaleDateString(
+        'en-US',
+        {
+            month: 'long',
+            year: 'numeric',
+            timeZone: 'UTC'
+        }
+    );
+}
+
+
+function formatDay(dateString) {
+
+    return dateString
+        .split('-')[2]
+        .replace(/^0/, '');
+}
+
+
+// ============================================================
+// EVENT DATABASE FUNCTIONS
+// ============================================================
+
+async function getUpcomingEvents(
+    guildId
+) {
+
+    const today =
+        getEasternToday();
+
+    const {
+        data,
+        error
+    } =
+        await supabase
+            .from('events')
+            .select('*')
+            .eq(
+                'guild_id',
+                guildId
+            )
+            .gte(
+                'date',
+                today
+            )
+            .order(
+                'date',
+                {
+                    ascending: true
+                }
+            )
+            .order(
+                'id',
+                {
+                    ascending: true
+                }
+            );
+
+    if (error) {
+        throw error;
+    }
+
+    return data || [];
+}
+
+
+// ============================================================
+// BUILD THE 4-EVENT LIST
+// ============================================================
+
+function buildUpcomingMessage(
+    events
+) {
+
+    let message =
+        '📅 **UPCOMING EVENTS**\n' +
+        '━━━━━━━━━━━━━━━━━━━━\n\n';
+
+    if (
+        !events ||
+        events.length === 0
+    ) {
+
+        message +=
+            '📭 **No upcoming events!**\n';
+
+        return message;
+    }
+
+    const visibleEvents =
+        events.slice(0, 4);
+
+    let currentMonth = null;
+
+    for (
+        const event of visibleEvents
+    ) {
+
+        const month =
+            formatMonth(
+                event.date
+            );
+
+        if (
+            month !== currentMonth
+        ) {
+
+            message +=
+                `🗓️ **${month.toUpperCase()}**\n\n`;
+
+            currentMonth =
+                month;
+        }
+
+        message +=
+            `**${formatDay(event.date)}** • ${event.name}\n`;
+
+        message +=
+            `   └─ ${event.description}\n\n`;
+    }
+
+    if (
+        events.length > 4
+    ) {
+
+        message +=
+            `📋 **+ ${events.length - 4} more upcoming events**\n`;
+    }
+
+    return message;
+}
+
+
+// ============================================================
+// BUILD FULL EVENT LIST
+// ============================================================
+
+function buildFullEventList(
+    events
+) {
+
+    let message =
+        '📋 **FULL UPCOMING EVENT LIST**\n' +
+        '━━━━━━━━━━━━━━━━━━━━\n\n';
+
+    for (
+        const event of events
+    ) {
+
+        message +=
+            `**${event.date}** • ${event.name}\n`;
+
+        message +=
+            `   └─ ${event.description}\n`;
+
+        message +=
+            `   └─ Event ID: \`${event.id}\`\n\n`;
+    }
+
+    return message;
+}
+
+
+// ============================================================
+// SPLIT LONG DISCORD MESSAGES
+// ============================================================
+
+function splitMessage(
+    message
+) {
+
+    const maxLength = 1900;
+
+    if (
+        message.length <= maxLength
+    ) {
+        return [message];
+    }
+
+    const chunks = [];
+
+    let remaining =
+        message;
+
+    while (
+        remaining.length > maxLength
+    ) {
+
+        let splitAt =
+            remaining.lastIndexOf(
+                '\n',
+                maxLength
+            );
+
+        if (
+            splitAt <= 0
+        ) {
+            splitAt =
+                maxLength;
+        }
+
+        chunks.push(
+            remaining.substring(
+                0,
+                splitAt
+            )
+        );
+
+        remaining =
+            remaining.substring(
+                splitAt
+            ).trimStart();
+    }
+
+    if (
+        remaining.length > 0
+    ) {
+        chunks.push(remaining);
+    }
+
+    return chunks;
+}
+
+
+// ============================================================
+// FULL LIST BUTTON
+// ============================================================
+
+function makeFullListButton() {
+
+    return new ButtonBuilder()
+        .setCustomId(
+            'view_full_event_list'
+        )
+        .setLabel(
+            'View Full Event List'
+        )
+        .setEmoji('📋')
+        .setStyle(
+            ButtonStyle.Primary
+        );
+}
+
+
+function makeButtonRow() {
+
+    return new ActionRowBuilder()
+        .addComponents(
+            makeFullListButton()
+        );
+}
+
+
+// ============================================================
+// REMINDERS
+// ============================================================
+
+async function checkReminders() {
+
+    const today =
+        getEasternToday();
+
+    try {
+
+        // Delete events that are in the past.
+
+        const {
+            error: deleteError
+        } =
+            await supabase
+                .from('events')
+                .delete()
+                .lt(
+                    'date',
+                    today
+                );
+
+        if (deleteError) {
+
+            console.error(
+                'Could not delete old events:',
+                deleteError
+            );
+        }
+
+
+        // Find events happening today.
+
+        const {
+            data: events,
+            error
+        } =
+            await supabase
+                .from('events')
+                .select('*')
+                .eq(
+                    'date',
+                    today
+                );
+
+        if (error) {
+
+            console.error(
+                'Could not load today events:',
+                error
+            );
+
+            return;
+        }
+
+        if (
+            !events ||
+            events.length === 0
+        ) {
+            return;
+        }
+
+
+        for (
+            const event of events
+        ) {
+
+            // Check whether the reminder was
+            // already sent.
+
+            const {
+                data: alreadySent,
+                error:
+                    reminderLookupError
+            } =
+                await supabase
+                    .from(
+                        'event_reminders'
+                    )
+                    .select(
+                        'event_id'
+                    )
+                    .eq(
+                        'event_id',
+                        event.id
+                    )
+                    .maybeSingle();
+
+            if (
+                reminderLookupError
+            ) {
+
+                console.error(
+                    `Could not check reminder for event ${event.id}:`,
+                    reminderLookupError
+                );
+
+                continue;
+            }
+
+            if (alreadySent) {
+                continue;
+            }
+
+
+            // Find the Discord server.
+
+            const guild =
+                client.guilds.cache.get(
+                    event.guild_id
+                );
+
+            if (!guild) {
+
+                console.log(
+                    `Guild ${event.guild_id} is not currently available.`
+                );
+
+                continue;
+            }
+
+
+            // Find the #events channel.
+
+            const channel =
+                guild.channels.cache.find(
+                    channel =>
+                        channel.isTextBased() &&
+                        channel.name ===
+                            EVENTS_CHANNEL_NAME
+                );
+
+            if (!channel) {
+
+                console.log(
+                    `[${guild.name}] #${EVENTS_CHANNEL_NAME} channel not found for reminder.`
+                );
+
+                continue;
+            }
+
+
+            // Build reminder.
+
+            let reminder =
+                `<@&${EVENTS_ROLE_ID}>\n\n` +
+                '🔔 **EVENT REMINDER**\n\n' +
+                `**${event.name}** is happening today!\n` +
+                `📝 ${event.description}`;
+
+
+            // Send reminder.
+
+            await channel.send({
+                content: reminder
+            });
+
+
+            // Record that reminder was sent.
+
+            const {
+                error: insertError
+            } =
+                await supabase
+                    .from(
+                        'event_reminders'
+                    )
+                    .insert({
+                        event_id:
+                            event.id,
+
+                        sent_at:
+                            new Date().toISOString()
+                    });
+
+            if (insertError) {
+
+                console.error(
+                    `Could not record reminder for event ${event.id}:`,
+                    insertError
+                );
+            }
+        }
+
+    } catch (error) {
+
+        console.error(
+            'checkReminders failed:',
+            error
+        );
+    }
+}
+
+
+// ============================================================
+// SLASH COMMANDS
+// ============================================================
 
 const commands = [
 
     new SlashCommandBuilder()
         .setName('event')
-        .setDescription('Manage your server calendar')
+        .setDescription(
+            'Manage server events'
+        )
 
-
-        // ============================
+        // ----------------------------------------------------
         // /event add
-        // ============================
+        // ----------------------------------------------------
 
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('add')
-                .setDescription(
-                    'Add an event to the calendar'
-                )
+        .addSubcommand(
+            subcommand =>
+                subcommand
+                    .setName('add')
+                    .setDescription(
+                        'Create a new event'
+                    )
 
-                .addStringOption(option =>
-                    option
-                        .setName('date')
-                        .setDescription(
-                            'Date (YYYY-MM-DD)'
-                        )
-                        .setRequired(true)
-                )
+                    .addStringOption(
+                        option =>
+                            option
+                                .setName('date')
+                                .setDescription(
+                                    'Event date (YYYY-MM-DD)'
+                                )
+                                .setRequired(true)
+                    )
 
-                .addStringOption(option =>
-                    option
-                        .setName('name')
-                        .setDescription(
-                            'Name of the event'
-                        )
-                        .setRequired(true)
-                )
+                    .addStringOption(
+                        option =>
+                            option
+                                .setName('name')
+                                .setDescription(
+                                    'Event name'
+                                )
+                                .setRequired(true)
+                    )
 
-                .addStringOption(option =>
-                    option
-                        .setName('description')
-                        .setDescription(
-                            'Optional description'
-                        )
-                        .setRequired(false)
-                )
+                    .addStringOption(
+                        option =>
+                            option
+                                .setName('description')
+                                .setDescription(
+                                    'Event description'
+                                )
+                                .setRequired(true)
+                    )
         )
 
-
-        // ============================
+        // ----------------------------------------------------
         // /event list
-        // ============================
+        // ----------------------------------------------------
 
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('list')
-                .setDescription(
-                    'Refresh the server calendar'
-                )
+        .addSubcommand(
+            subcommand =>
+                subcommand
+                    .setName('list')
+                    .setDescription(
+                        'Show the 4 closest upcoming events'
+                    )
         )
 
-
-        // ============================
+        // ----------------------------------------------------
         // /event delete
-        // ============================
+        // ----------------------------------------------------
 
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('delete')
-                .setDescription(
-                    'Delete an event from the calendar'
-                )
+        .addSubcommand(
+            subcommand =>
+                subcommand
+                    .setName('delete')
+                    .setDescription(
+                        'Delete an event'
+                    )
 
-                .addIntegerOption(option =>
-                    option
-                        .setName('id')
-                        .setDescription(
-                            'The Event ID'
-                        )
-                        .setRequired(true)
-                )
+                    .addIntegerOption(
+                        option =>
+                            option
+                                .setName('id')
+                                .setDescription(
+                                    'Event ID'
+                                )
+                                .setRequired(true)
+                    )
         )
 
-
-        // ============================
+        // ----------------------------------------------------
         // /event edit
-        // ============================
+        // ----------------------------------------------------
 
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('edit')
-                .setDescription(
-                    'Edit an existing calendar event'
-                )
+        .addSubcommand(
+            subcommand =>
+                subcommand
+                    .setName('edit')
+                    .setDescription(
+                        'Edit an event'
+                    )
 
-                .addIntegerOption(option =>
-                    option
-                        .setName('id')
-                        .setDescription(
-                            'The Event ID'
-                        )
-                        .setRequired(true)
-                )
+                    .addIntegerOption(
+                        option =>
+                            option
+                                .setName('id')
+                                .setDescription(
+                                    'Event ID'
+                                )
+                                .setRequired(true)
+                    )
 
-                .addStringOption(option =>
-                    option
-                        .setName('date')
-                        .setDescription(
-                            'New date (YYYY-MM-DD)'
-                        )
-                        .setRequired(true)
-                )
+                    .addStringOption(
+                        option =>
+                            option
+                                .setName('date')
+                                .setDescription(
+                                    'New event date (YYYY-MM-DD)'
+                                )
+                                .setRequired(true)
+                    )
 
-                .addStringOption(option =>
-                    option
-                        .setName('name')
-                        .setDescription(
-                            'New event name'
-                        )
-                        .setRequired(true)
-                )
+                    .addStringOption(
+                        option =>
+                            option
+                                .setName('name')
+                                .setDescription(
+                                    'New event name'
+                                )
+                                .setRequired(true)
+                    )
 
-                .addStringOption(option =>
-                    option
-                        .setName('description')
-                        .setDescription(
-                            'New description'
-                        )
-                        .setRequired(false)
-                )
+                    .addStringOption(
+                        option =>
+                            option
+                                .setName('description')
+                                .setDescription(
+                                    'New event description'
+                                )
+                                .setRequired(true)
+                    )
         )
 
-].map(command => command.toJSON());
-
-
-// ============================
-// Register Discord commands
-// ============================
-
-const rest = new REST({
-    version: '10'
-})
-    .setToken(process.env.DISCORD_TOKEN);
-
-
-async function registerCommands() {
-
-    try {
-
-        console.log(
-            'Registering commands...'
-        );
-
-
-        await rest.put(
-            Routes.applicationGuildCommands(
-                process.env.CLIENT_ID,
-                process.env.GUILD_ID
-            ),
-            {
-                body: commands
-            }
-        );
-
-
-        console.log(
-            'Commands registered!'
-        );
-
-    } catch (error) {
-
-        console.error(error);
-
-    }
-}
-
-
-// ============================
-// When the bot connects
-// ============================
-
-client.once('ready', async () => {
-
-    console.log(
-        'Server Calendar is online!'
-    );
-
-
-    client.user.setActivity(
-        'Developed by OogaBoogaBob',
-        {
-            type: 0
-        }
-    );
-
-
-    // Update the calendar when bot starts
-    setTimeout(
-        async () => {
-
-            await updateCalendar(
-                client.guilds.cache.first()
-            );
-
-        },
-        3000
-    );
-
-
-    // Check reminders when bot starts
-    setTimeout(
-        async () => {
-
-            await checkReminders();
-
-        },
-        5000
-    );
-
-});
-
-
-// Check reminders every hour
-setInterval(
-    checkReminders,
-    60 * 60 * 1000
+].map(
+    command =>
+        command.toJSON()
 );
 
 
-// ============================
-// Handle Discord interactions
-// ============================
+// ============================================================
+// REGISTER SLASH COMMANDS
+// ============================================================
+
+async function registerCommands() {
+
+    const rest =
+        new REST({
+            version: '10'
+        }).setToken(
+            TOKEN
+        );
+
+    console.log(
+        'Registering commands...'
+    );
+
+    await rest.put(
+    Routes.applicationGuildCommands(
+        CLIENT_ID,
+        process.env.GUILD_ID
+    ),
+    {
+        body: commands
+    }
+);
+
+    console.log(
+        'Commands registered!'
+    );
+}
+
+
+// ============================================================
+// BOT READY
+// ============================================================
+
+client.once(
+    'clientReady',
+    async () => {
+
+        console.log(
+            'Server Calendar is online!'
+        );
+
+        client.user.setActivity(
+            'Developed by OogaBoogaBob',
+            {
+                type: 0
+            }
+        );
+
+        try {
+
+            await registerCommands();
+
+        } catch (error) {
+
+            console.error(
+                'Failed to register commands:',
+                error
+            );
+        }
+    }
+);
+
+
+// ============================================================
+// INTERACTION HANDLER
+// ============================================================
 
 client.on(
     'interactionCreate',
     async interaction => {
 
-console.log(
-    'INTERACTION RECEIVED:',
-    interaction.type,
-    interaction.isButton() ? interaction.customId : interaction.commandName
-);
-
-
-        // ============================
-        // View Full Event List button
-        // ============================
+        // ====================================================
+        // FULL EVENT LIST BUTTON
+        // ====================================================
 
         if (
             interaction.isButton() &&
@@ -627,107 +853,130 @@ console.log(
                 'view_full_event_list'
         ) {
 
-            await interaction.deferReply({
-                flags: MessageFlags.Ephemeral
-            });
+            console.log(
+                'Full event list button clicked.'
+            );
+
+            try {
+
+                // Respond immediately so Discord
+                // does not time out.
+
+                await interaction.reply({
+                    content:
+                        '⏳ Loading full event list...',
+                    flags:
+                        MessageFlags.Ephemeral
+                });
 
 
-            const {
-                data: events,
-                error
-            } = await supabase
-                .from('events')
-                .select('*')
-                .eq(
-                    'guild_id',
-                    interaction.guildId
-                )
-                .order(
-                    'date',
-                    {
-                        ascending: true
-                    }
-                );
+                // Load all upcoming events.
+
+                const events =
+                    await getUpcomingEvents(
+                        interaction.guildId
+                    );
 
 
-            if (error) {
+                if (
+                    events.length === 0
+                ) {
 
-                console.error(
-                    'Could not load full event list:',
-                    error
-                );
+                    await interaction.editReply({
+                        content:
+                            '📭 **There are no upcoming events!**'
+                    });
 
-
-                await interaction.editReply({
-    content: '❌ Something went wrong while loading the events.'
-});
-
-                return;
-            }
-
-
-            if (!events || events.length === 0) {
-
-                await interaction.editReply({
-    content: '📅 There are no upcoming events!'
-});
-
-                return;
-            }
-
-
-            let message =
-                '📋 **FULL UPCOMING EVENT LIST**\n\n';
-
-
-            for (const event of events) {
-
-                message +=
-                    `**${event.date}** — ${event.name}\n`;
-
-
-                if (event.description) {
-
-                    message +=
-                        `> ${event.description}\n`;
+                    return;
                 }
 
 
-                message +=
-                    `> Event ID: \`${event.id}\`\n\n`;
+                const fullMessage =
+                    buildFullEventList(
+                        events
+                    );
+
+
+                const chunks =
+                    splitMessage(
+                        fullMessage
+                    );
+
+
+                // Show first chunk.
+
+                await interaction.editReply({
+                    content:
+                        chunks[0]
+                });
+
+
+                // Send remaining chunks privately.
+
+                for (
+                    let i = 1;
+                    i < chunks.length;
+                    i++
+                ) {
+
+                    await interaction.followUp({
+                        content:
+                            chunks[i],
+                        flags:
+                            MessageFlags.Ephemeral
+                    });
+                }
+
+            } catch (error) {
+
+                console.error(
+                    'Button interaction error:',
+                    error
+                );
+
+                try {
+
+                    if (
+                        interaction.replied
+                    ) {
+
+                        await interaction.editReply({
+                            content:
+                                '❌ Something went wrong while loading the events.'
+                        });
+
+                    } else {
+
+                        await interaction.reply({
+                            content:
+                                '❌ Something went wrong while loading the events.',
+                            flags:
+                                MessageFlags.Ephemeral
+                        });
+                    }
+
+                } catch (replyError) {
+
+                    console.error(
+                        'Could not send button error:',
+                        replyError
+                    );
+                }
             }
-
-
-            // Prevent an overly long Discord message
-            if (message.length > 1900) {
-
-                message =
-                    message.substring(
-                        0,
-                        1900
-                    ) +
-                    '\n\n...and more events.';
-
-            }
-
-
-            await interaction.editReply(
-                message
-            );
 
             return;
         }
 
 
-        // ============================
-        // Ignore anything that isn't
-        // a slash command
-        // ============================
+        // ====================================================
+        // ONLY CONTINUE FOR SLASH COMMANDS
+        // ====================================================
 
-        if (!interaction.isChatInputCommand()) {
+        if (
+            !interaction.isChatInputCommand()
+        ) {
             return;
         }
-
 
         if (
             interaction.commandName !==
@@ -737,13 +986,16 @@ console.log(
         }
 
 
-        // ============================
+        const subcommand =
+            interaction.options.getSubcommand();
+
+
+        // ====================================================
         // /event add
-        // ============================
+        // ====================================================
 
         if (
-            interaction.options.getSubcommand() ===
-            'add'
+            subcommand === 'add'
         ) {
 
             const date =
@@ -751,307 +1003,208 @@ console.log(
                     'date'
                 );
 
-
             const name =
                 interaction.options.getString(
                     'name'
                 );
 
-
             const description =
                 interaction.options.getString(
                     'description'
-                ) || '';
+                );
 
+
+            // Validate date.
 
             if (
-                !/^\d{4}-\d{2}-\d{2}$/.test(
-                    date
-                )
+                !isValidDate(date)
             ) {
 
-                await interaction.reply(
-                    '❌ Please use the date format YYYY-MM-DD.'
-                );
+                await interaction.reply({
+                    content:
+                        '❌ Invalid date. Use a real date in YYYY-MM-DD format.',
+                    flags:
+                        MessageFlags.Ephemeral
+                });
 
                 return;
             }
 
 
-            const {
-                data: event,
-                error
-            } = await supabase
-                .from('events')
-                .insert({
-                    guild_id:
-                        interaction.guildId,
-                    name:
-                        name,
-                    date:
-                        date,
-                    description:
-                        description,
-                    created_by:
-                        interaction.user.id,
-                    created_at:
-                        new Date().toISOString()
-                })
-                .select()
-                .single();
+            // Validate text.
+
+            if (
+                !name ||
+                !name.trim()
+            ) {
+
+                await interaction.reply({
+                    content:
+                        '❌ Event name cannot be empty.',
+                    flags:
+                        MessageFlags.Ephemeral
+                });
+
+                return;
+            }
+
+            if (
+                !description ||
+                !description.trim()
+            ) {
+
+                await interaction.reply({
+                    content:
+                        '❌ Event description cannot be empty.',
+                    flags:
+                        MessageFlags.Ephemeral
+                });
+
+                return;
+            }
 
 
-            if (error) {
+            try {
+
+                const {
+                    data: event,
+                    error
+                } =
+                    await supabase
+                        .from('events')
+                        .insert({
+                            guild_id:
+                                interaction.guildId,
+
+                            name:
+                                name.trim(),
+
+                            date,
+
+                            description:
+                                description.trim(),
+
+                            created_by:
+                                interaction.user.id,
+
+                            created_at:
+                                new Date().toISOString()
+                        })
+                        .select()
+                        .single();
+
+
+                if (error) {
+
+                    console.error(
+                        'Could not add event:',
+                        error
+                    );
+
+                    await interaction.reply({
+                        content:
+                            '❌ Could not add the event.',
+                        flags:
+                            MessageFlags.Ephemeral
+                    });
+
+                    return;
+                }
+
+
+                await interaction.reply({
+                    content:
+                        `✅ Added **${event.name}**\n` +
+                        `📅 ${event.date}\n` +
+                        `📝 ${event.description}\n` +
+                        `🆔 Event ID: \`${event.id}\``,
+                    flags:
+                        MessageFlags.Ephemeral
+                });
+
+            } catch (error) {
 
                 console.error(
-                    'Could not add event:',
+                    'Add event error:',
                     error
                 );
 
+                if (
+                    !interaction.replied
+                ) {
 
-                await interaction.reply(
-                    '❌ Something went wrong while adding the event.'
-                );
-
-                return;
-            }
-
-
-            await updateCalendar(
-                interaction.guild
-            );
-
-
-            await interaction.reply(
-                `✅ Added **${name}** for **${date}**!\n` +
-                `Event ID: \`${event.id}\``
-            );
-
-
-            return;
-        }
-
-
-        // ============================
-        // /event list
-        // ============================
-
-        if (
-    interaction.options.getSubcommand() ===
-    'list'
-) {
-
-    const { data: events, error } = await supabase
-        .from('events')
-        .select('*')
-        .eq('guild_id', interaction.guild.id)
-        .order('date', { ascending: true });
-
-    if (error) {
-
-        console.error(
-            'Could not load events:',
-            error
-        );
-
-        await interaction.reply(
-            '❌ Could not load the events.'
-        );
-
-        return;
-    }
-
-    let message =
-        '📅 **SERVER EVENTS CALENDAR**\n' +
-        '━━━━━━━━━━━━━━━━━━━━\n\n';
-
-    let currentMonth = '';
-
-const extraEvents = Math.max(
-    (events || []).length - 4,
-    0
-);
-
-    for (const event of (events || []).slice(0, 4)) {
-
-        const date = new Date(
-            event.date + 'T00:00:00'
-        );
-
-        const month = date
-            .toLocaleDateString(
-                'en-US',
-                {
-                    month: 'long',
-                    year: 'numeric'
+                    await interaction.reply({
+                        content:
+                            '❌ Something went wrong while adding the event.',
+                        flags:
+                            MessageFlags.Ephemeral
+                    });
                 }
-            )
-            .toUpperCase();
-
-        if (month !== currentMonth) {
-
-            currentMonth = month;
-
-            message +=
-                `🗓️ **${month}**\n\n`;
-        }
-
-        const day = date.getDate();
-
-        message +=
-            `**${day}** • ${event.name}\n`;
-
-        if (event.description) {
-
-            message +=
-                `└─ ${event.description}\n`;
-        }
-
-        message += '\n';
-    }
-
-    if (!events || events.length === 0) {
-
-        message +=
-            'No upcoming events scheduled.\n';
-    }
-
-if (extraEvents > 0) {
-    message +=
-        `📋 **+ ${extraEvents} more upcoming events**\n\n`;
-}
-
-    const button = new ButtonBuilder()
-    .setCustomId('view_full_event_list')
-    .setLabel('View Full Event List')
-    .setEmoji('📋')
-    .setStyle(ButtonStyle.Primary);
-
-const row = new ActionRowBuilder()
-    .addComponents(button);
-
-await interaction.reply({
-
-    content: message,
-
-    components: [row]
-
-});
-
-    return;
-}
-
-
-        // ============================
-        // /event delete
-        // ============================
-
-        if (
-            interaction.options.getSubcommand() ===
-            'delete'
-        ) {
-
-            const id =
-                interaction.options.getInteger(
-                    'id'
-                );
-
-
-            const {
-                data: event,
-                error: findError
-            } = await supabase
-                .from('events')
-                .select('*')
-                .eq(
-                    'id',
-                    id
-                )
-                .eq(
-                    'guild_id',
-                    interaction.guildId
-                )
-                .maybeSingle();
-
-
-            if (findError) {
-
-                console.error(
-                    'Could not find event:',
-                    findError
-                );
-
-
-                await interaction.reply(
-                    '❌ Something went wrong while finding the event.'
-                );
-
-                return;
             }
-
-
-            if (!event) {
-
-                await interaction.reply(
-                    `❌ I couldn't find Event ID \`${id}\`.`
-                );
-
-                return;
-            }
-
-
-            const {
-                error: deleteError
-            } = await supabase
-                .from('events')
-                .delete()
-                .eq(
-                    'id',
-                    id
-                )
-                .eq(
-                    'guild_id',
-                    interaction.guildId
-                );
-
-
-            if (deleteError) {
-
-                console.error(
-                    'Could not delete event:',
-                    deleteError
-                );
-
-
-                await interaction.reply(
-                    '❌ Something went wrong while deleting the event.'
-                );
-
-                return;
-            }
-
-
-            await updateCalendar(
-                interaction.guild
-            );
-
-
-            await interaction.reply(
-                `🗑️ Deleted **${event.name}** (${event.date}).`
-            );
-
 
             return;
         }
 
 
-        // ============================
-        // /event edit
-        // ============================
+        // ====================================================
+        // /event list
+        // ====================================================
 
         if (
-            interaction.options.getSubcommand() ===
-            'edit'
+            subcommand === 'list'
+        ) {
+
+            try {
+
+                const events =
+                    await getUpcomingEvents(
+                        interaction.guildId
+                    );
+
+
+                const message =
+                    buildUpcomingMessage(
+                        events
+                    );
+
+
+                const row =
+                    makeButtonRow();
+
+
+                await interaction.reply({
+                    content:
+                        message,
+                    components: [
+                        row
+                    ]
+                });
+
+            } catch (error) {
+
+                console.error(
+                    'Event list error:',
+                    error
+                );
+
+                await interaction.reply({
+                    content:
+                        '❌ Something went wrong while loading the events.',
+                    flags:
+                        MessageFlags.Ephemeral
+                });
+            }
+
+            return;
+        }
+
+
+        // ====================================================
+        // /event delete
+        // ====================================================
+
+        if (
+            subcommand === 'delete'
         ) {
 
             const id =
@@ -1059,156 +1212,383 @@ await interaction.reply({
                     'id'
                 );
 
+
+            try {
+
+                const {
+                    data: existingEvent,
+                    error: findError
+                } =
+                    await supabase
+                        .from('events')
+                        .select('*')
+                        .eq(
+                            'id',
+                            id
+                        )
+                        .eq(
+                            'guild_id',
+                            interaction.guildId
+                        )
+                        .maybeSingle();
+
+
+                if (findError) {
+
+                    console.error(
+                        'Could not find event:',
+                        findError
+                    );
+
+                    await interaction.reply({
+                        content:
+                            '❌ Could not find that event.',
+                        flags:
+                            MessageFlags.Ephemeral
+                    });
+
+                    return;
+                }
+
+
+                if (
+                    !existingEvent
+                ) {
+
+                    await interaction.reply({
+                        content:
+                            `❌ No event with ID \`${id}\` was found.`,
+                        flags:
+                            MessageFlags.Ephemeral
+                    });
+
+                    return;
+                }
+
+
+                const {
+                    error
+                } =
+                    await supabase
+                        .from('events')
+                        .delete()
+                        .eq(
+                            'id',
+                            id
+                        )
+                        .eq(
+                            'guild_id',
+                            interaction.guildId
+                        );
+
+
+                if (error) {
+
+                    console.error(
+                        'Could not delete event:',
+                        error
+                    );
+
+                    await interaction.reply({
+                        content:
+                            '❌ Could not delete the event.',
+                        flags:
+                            MessageFlags.Ephemeral
+                    });
+
+                    return;
+                }
+
+
+                // Remove any reminder record.
+
+                await supabase
+                    .from('event_reminders')
+                    .delete()
+                    .eq(
+                        'event_id',
+                        id
+                    );
+
+
+                await interaction.reply({
+                    content:
+                        `🗑️ Deleted **${existingEvent.name}**`,
+                    flags:
+                        MessageFlags.Ephemeral
+                });
+
+            } catch (error) {
+
+                console.error(
+                    'Delete event error:',
+                    error
+                );
+
+                if (
+                    !interaction.replied
+                ) {
+
+                    await interaction.reply({
+                        content:
+                            '❌ Something went wrong while deleting the event.',
+                        flags:
+                            MessageFlags.Ephemeral
+                    });
+                }
+            }
+
+            return;
+        }
+
+
+        // ====================================================
+        // /event edit
+        // ====================================================
+
+        if (
+            subcommand === 'edit'
+        ) {
+
+            const id =
+                interaction.options.getInteger(
+                    'id'
+                );
 
             const date =
                 interaction.options.getString(
                     'date'
                 );
 
-
             const name =
                 interaction.options.getString(
                     'name'
                 );
 
-
             const description =
                 interaction.options.getString(
                     'description'
-                ) || '';
+                );
 
+
+            // Validate date.
 
             if (
-                !/^\d{4}-\d{2}-\d{2}$/.test(
-                    date
-                )
+                !isValidDate(date)
             ) {
 
-                await interaction.reply(
-                    '❌ Please use the date format YYYY-MM-DD.'
-                );
+                await interaction.reply({
+                    content:
+                        '❌ Invalid date. Use a real date in YYYY-MM-DD format.',
+                    flags:
+                        MessageFlags.Ephemeral
+                });
 
                 return;
             }
 
 
-            const {
-                data: event,
-                error: findError
-            } = await supabase
-                .from('events')
-                .select('*')
-                .eq(
-                    'id',
-                    id
-                )
-                .eq(
-                    'guild_id',
-                    interaction.guildId
-                )
-                .maybeSingle();
+            // Validate text.
+
+            if (
+                !name ||
+                !name.trim()
+            ) {
+
+                await interaction.reply({
+                    content:
+                        '❌ Event name cannot be empty.',
+                    flags:
+                        MessageFlags.Ephemeral
+                });
+
+                return;
+            }
+
+            if (
+                !description ||
+                !description.trim()
+            ) {
+
+                await interaction.reply({
+                    content:
+                        '❌ Event description cannot be empty.',
+                    flags:
+                        MessageFlags.Ephemeral
+                });
+
+                return;
+            }
 
 
-            if (findError) {
+            try {
+
+                const {
+                    data: existingEvent,
+                    error: findError
+                } =
+                    await supabase
+                        .from('events')
+                        .select('*')
+                        .eq(
+                            'id',
+                            id
+                        )
+                        .eq(
+                            'guild_id',
+                            interaction.guildId
+                        )
+                        .maybeSingle();
+
+
+                if (findError) {
+
+                    console.error(
+                        'Could not find event:',
+                        findError
+                    );
+
+                    await interaction.reply({
+                        content:
+                            '❌ Could not find that event.',
+                        flags:
+                            MessageFlags.Ephemeral
+                    });
+
+                    return;
+                }
+
+
+                if (
+                    !existingEvent
+                ) {
+
+                    await interaction.reply({
+                        content:
+                            `❌ No event with ID \`${id}\` was found.`,
+                        flags:
+                            MessageFlags.Ephemeral
+                    });
+
+                    return;
+                }
+
+
+                const {
+                    data: updatedEvent,
+                    error
+                } =
+                    await supabase
+                        .from('events')
+                        .update({
+                            date,
+
+                            name:
+                                name.trim(),
+
+                            description:
+                                description.trim()
+                        })
+                        .eq(
+                            'id',
+                            id
+                        )
+                        .eq(
+                            'guild_id',
+                            interaction.guildId
+                        )
+                        .select()
+                        .single();
+
+
+                if (error) {
+
+                    console.error(
+                        'Could not edit event:',
+                        error
+                    );
+
+                    await interaction.reply({
+                        content:
+                            '❌ Could not edit the event.',
+                        flags:
+                            MessageFlags.Ephemeral
+                    });
+
+                    return;
+                }
+
+
+                // Remove the old reminder record.
+                // This allows the event to receive a new
+                // reminder if its date is changed.
+
+                await supabase
+                    .from('event_reminders')
+                    .delete()
+                    .eq(
+                        'event_id',
+                        id
+                    );
+
+
+                await interaction.reply({
+                    content:
+                        `✏️ Edited **${updatedEvent.name}**\n` +
+                        `📅 ${updatedEvent.date}\n` +
+                        `📝 ${updatedEvent.description}\n` +
+                        `🆔 Event ID: \`${updatedEvent.id}\``,
+                    flags:
+                        MessageFlags.Ephemeral
+                });
+
+            } catch (error) {
 
                 console.error(
-                    'Could not find event:',
-                    findError
+                    'Edit event error:',
+                    error
                 );
 
+                if (
+                    !interaction.replied
+                ) {
 
-                await interaction.reply(
-                    '❌ Something went wrong while finding the event.'
-                );
-
-                return;
+                    await interaction.reply({
+                        content:
+                            '❌ Something went wrong while editing the event.',
+                        flags:
+                            MessageFlags.Ephemeral
+                    });
+                }
             }
-
-
-            if (!event) {
-
-                await interaction.reply(
-                    `❌ I couldn't find Event ID \`${id}\`.`
-                );
-
-                return;
-            }
-
-
-            const {
-                error: updateError
-            } = await supabase
-                .from('events')
-                .update({
-                    date:
-                        date,
-                    name:
-                        name,
-                    description:
-                        description
-                })
-                .eq(
-                    'id',
-                    id
-                )
-                .eq(
-                    'guild_id',
-                    interaction.guildId
-                );
-
-
-            if (updateError) {
-
-                console.error(
-                    'Could not update event:',
-                    updateError
-                );
-
-
-                await interaction.reply(
-                    '❌ Something went wrong while editing the event.'
-                );
-
-                return;
-            }
-
-
-            await updateCalendar(
-                interaction.guild
-            );
-
-
-            await interaction.reply(
-                `✏️ Updated Event ID \`${id}\`!\n` +
-                `**${name}** is now scheduled for **${date}**.`
-            );
-
 
             return;
         }
+    }
+);
+
+
+// ============================================================
+// LOGIN TO DISCORD
+// ============================================================
+
+client.login(
+    TOKEN
+).catch(
+    error => {
+
+        console.error(
+            'Failed to log in to Discord:',
+            error
+        );
 
     }
 );
 
 
-// ============================
-// Start the bot
-// ============================
-
-registerCommands();
-
-client.login(
-    process.env.DISCORD_TOKEN
-);
-
-
-// ============================
-// Web server for Render
-// ============================
-
-const PORT =
-    process.env.PORT || 3000;
-
+// ============================================================
+// WEB SERVER
+// ============================================================
 
 app.get(
     '/',
@@ -1216,35 +1596,31 @@ app.get(
 
         try {
 
-            const guild =
-                client.guilds.cache.first();
+            // Cron-job.org hits this route every
+            // 10 minutes. This keeps Render awake
+            // and checks for event reminders.
 
+            await checkReminders();
 
-            if (guild) {
-
-                await checkReminders();
-
-            }
-
-
-            res.send(
-                'Server Calendar is online!'
-            );
+            res
+                .status(200)
+                .send(
+                    'Server Calendar is online!'
+                );
 
         } catch (error) {
 
             console.error(
-                'Error during web refresh:',
+                'Reminder check failed:',
                 error
             );
 
-
-            res.status(500).send(
-                'Server Calendar is online, but refresh failed.'
-            );
-
+            res
+                .status(500)
+                .send(
+                    'Server Calendar is online, but the reminder check failed.'
+                );
         }
-
     }
 );
 
